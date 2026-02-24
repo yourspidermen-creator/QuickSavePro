@@ -103,6 +103,12 @@ export default function App() {
       await runTerminal(url);
 
       setLogs(prev => [...prev, { 
+        text: `[CONFIG] Engine set to: https://quicksaveapi.onrender.com`, 
+        color: 'text-purple-400', 
+        time: new Date().toLocaleTimeString().split(' ')[0] 
+      }]);
+
+      setLogs(prev => [...prev, { 
         text: `[API] Sending request to QuickSave Engine...`, 
         color: 'text-indigo-400', 
         time: new Date().toLocaleTimeString().split(' ')[0] 
@@ -114,10 +120,28 @@ export default function App() {
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ message: "Server error" }));
-        // Check for specific "Not found" message
-        if (errorData.message === "Not found" || response.status === 404) {
-             throw new Error("Video not found. Please check the link privacy settings or try another link.");
+        
+        if (errorData.debug) {
+           setLogs(prev => [...prev, { 
+            text: `[DEBUG] Raw API Error: ${errorData.debug.substring(0, 100)}...`, 
+            color: 'text-gray-500', 
+            time: new Date().toLocaleTimeString().split(' ')[0] 
+          }]);
         }
+
+        // Handle specific error cases
+        if (response.status === 404 || errorData.message?.includes("not found")) {
+          throw new Error("Video not found. The link might be private, deleted, or unsupported.");
+        }
+        
+        if (response.status === 403 || errorData.message?.includes("private")) {
+          throw new Error("Access denied. This video is private or restricted.");
+        }
+
+        if (response.status === 500) {
+           throw new Error("Server error. The download service is currently unavailable.");
+        }
+
         throw new Error(errorData.message || `API Error: ${response.status}`);
       }
       
