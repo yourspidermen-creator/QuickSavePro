@@ -9,7 +9,10 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(false);
   const [error, setError] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'extracting' | 'success' | 'error' | 'downloading'>('idle');
+  const [errorMessage, setErrorMessage] = useState('');
   const [logs, setLogs] = useState<{ text: string; color: string; time: string }[]>([]);
+  const [videoData, setVideoData] = useState<any>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [toast, setToast] = useState<{ title: string; msg: string; isError: boolean; visible: boolean }>({
     title: '',
@@ -84,19 +87,73 @@ export default function App() {
   const handleDownload = async () => {
     if (!isValidUrl(url)) {
       setError(true);
+      setStatus('error');
+      setErrorMessage('Please enter a valid URL.');
       return;
     }
     setError(false);
     setResult(false);
     setLoading(true);
+    setVideoData(null);
+    setStatus('extracting');
+    setErrorMessage('');
 
-    await runTerminal(url);
+    try {
+      // Run terminal simulation for visual effect
+      await runTerminal(url);
 
-    setTimeout(() => {
+      setLogs(prev => [...prev, { 
+        text: `[API] Sending request to QuickSave Engine...`, 
+        color: 'text-indigo-400', 
+        time: new Date().toLocaleTimeString().split(' ')[0] 
+      }]);
+
+      // Call the proxy API
+      const apiUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+      const response = await fetch(apiUrl);
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: "Server error" }));
+        // Check for specific "Not found" message
+        if (errorData.message === "Not found" || response.status === 404) {
+             throw new Error("Video not found. Please check the link privacy settings or try another link.");
+        }
+        throw new Error(errorData.message || `API Error: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      setLogs(prev => [...prev, { 
+        text: `[API] Data received successfully. Parsing...`, 
+        color: 'text-emerald-400', 
+        time: new Date().toLocaleTimeString().split(' ')[0] 
+      }]);
+
+      // Handle different API response structures (links, medias, or direct url)
+      if (data && (data.title || data.url || data.medias || data.links || data.data)) {
+        // Normalize data if it's nested in 'data' property
+        const normalizedData = data.data || data;
+        setVideoData(normalizedData);
+        setLoading(false);
+        setResult(true);
+        setStatus('success');
+        showToast('Success', 'Media extracted successfully.');
+      } else {
+        throw new Error('The API returned no downloadable content for this link.');
+      }
+    } catch (err: any) {
+      console.error('Download error:', err);
       setLoading(false);
-      setResult(true);
-      showToast('Success', 'Media extracted successfully.');
-    }, 500);
+      setStatus('error');
+      const msg = err.message || 'Failed to extract media. Please check the URL and try again.';
+      setErrorMessage(msg);
+      setLogs(prev => [...prev, { 
+        text: `[ERROR] ${msg}`, 
+        color: 'text-red-500', 
+        time: new Date().toLocaleTimeString().split(' ')[0] 
+      }]);
+      showToast('Error', msg, true);
+    }
   };
 
   const handlePaste = async () => {
@@ -113,6 +170,7 @@ export default function App() {
     setProgressVisible(true);
     setProgressPercent(0);
     setProgressStatus('Initializing connection...');
+    setStatus('downloading');
     
     let w = 0;
     if (progressInterval.current) clearInterval(progressInterval.current);
@@ -127,6 +185,7 @@ export default function App() {
         setProgressStatus('Saving to device...');
         setTimeout(() => {
           setProgressVisible(false);
+          setStatus('success');
           showToast('Complete', 'File saved to gallery.');
         }, 1000);
       }
@@ -136,6 +195,7 @@ export default function App() {
   const cancelDownload = () => {
     if (progressInterval.current) clearInterval(progressInterval.current);
     setProgressVisible(false);
+    setStatus('idle');
     showToast('Cancelled', 'Download aborted.', true);
   };
 
@@ -334,10 +394,38 @@ export default function App() {
                 </div>
               </div>
               
+              {/* Status Indicator */}
+              <div className="mt-6 flex justify-center">
+                {status === 'extracting' && (
+                  <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-bold animate-pulse">
+                    <i className="fa-solid fa-circle-notch fa-spin"></i>
+                    <span>EXTRACTION IN PROGRESS...</span>
+                  </div>
+                )}
+                {status === 'downloading' && (
+                  <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-400 text-xs font-bold animate-pulse">
+                    <i className="fa-solid fa-download animate-bounce"></i>
+                    <span>DOWNLOADING MEDIA...</span>
+                  </div>
+                )}
+                {status === 'success' && result && (
+                  <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold">
+                    <i className="fa-solid fa-check-double"></i>
+                    <span>EXTRACTION SUCCESSFUL</span>
+                  </div>
+                )}
+                {status === 'error' && (
+                  <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-bold">
+                    <i className="fa-solid fa-triangle-exclamation"></i>
+                    <span>EXTRACTION FAILED</span>
+                  </div>
+                )}
+              </div>
+
               {/* Messages */}
-              {error && (
-                <p className="text-red-400 text-sm mt-4 text-left flex items-center animate-pulse pl-2">
-                  <i className="fa-solid fa-circle-exclamation mr-2"></i> Invalid URL detected.
+              {status === 'error' && (
+                <p className="text-red-400 text-sm mt-4 text-center flex items-center justify-center animate-fade-in-up pl-2">
+                  <i className="fa-solid fa-circle-exclamation mr-2"></i> {errorMessage || 'Invalid URL or service error.'}
                 </p>
               )}
 
@@ -369,18 +457,26 @@ export default function App() {
               )}
 
               {/* Result Area */}
-              {result && (
+              {result && videoData && (
                 <div className="mt-10 border-t border-white/5 pt-8 text-left animate-fade-in-up">
                   <div className="flex flex-col md:flex-row gap-6 bg-white/[0.02] p-5 rounded-2xl border border-white/5 backdrop-blur-sm">
                     {/* Thumbnail */}
                     <div className="relative w-full md:w-5/12 aspect-video rounded-xl overflow-hidden border border-white/10 group bg-black shadow-2xl">
-                      <img src="https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&h=337&fit=crop" className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition duration-500" alt="Thumbnail" />
+                      <img 
+                        src={videoData.thumbnail || videoData.thumb || "https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&h=337&fit=crop"} 
+                        className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition duration-500" 
+                        alt="Thumbnail" 
+                      />
                       <div className="absolute inset-0 bg-black/40 flex items-center justify-center group-hover:bg-black/20 transition">
                         <div className="w-14 h-14 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center border border-white/20 group-hover:scale-110 transition shadow-lg">
                           <i className="fa-solid fa-play text-white ml-1 text-xl"></i>
                         </div>
                       </div>
-                      <span className="absolute bottom-3 right-3 bg-black/70 backdrop-blur-md text-[10px] font-bold text-white px-2 py-1 rounded-md border border-white/10 font-mono">04:20</span>
+                      {videoData.duration && (
+                        <span className="absolute bottom-3 right-3 bg-black/70 backdrop-blur-md text-[10px] font-bold text-white px-2 py-1 rounded-md border border-white/10 font-mono">
+                          {videoData.duration}
+                        </span>
+                      )}
                     </div>
                     
                     {/* Info */}
@@ -390,38 +486,97 @@ export default function App() {
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 uppercase">Video</span>
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 uppercase">Ready</span>
                         </div>
-                        <h3 className="text-xl font-bold text-white line-clamp-2 leading-snug mb-2">Epic Viral Video - High Quality Render</h3>
-                        <p className="text-xs text-slate-500 mb-6 flex items-center gap-2 font-mono"><i className="fa-regular fa-id-card"></i> <span>@ContentCreator</span></p>
+                        <h3 className="text-xl font-bold text-white line-clamp-2 leading-snug mb-2">
+                          {videoData.title || "Video Content"}
+                        </h3>
+                        <p className="text-xs text-slate-500 mb-6 flex items-center gap-2 font-mono">
+                          <i className="fa-regular fa-id-card"></i> 
+                          <span>{videoData.author || videoData.uploader || "Unknown Creator"}</span>
+                        </p>
                       </div>
                       <div className="space-y-3">
-                        <button className="w-full flex justify-between items-center p-3.5 rounded-xl bg-white/[0.03] hover:bg-indigo-500/10 border border-white/10 hover:border-indigo-500/50 group transition duration-300" onClick={startDownload}>
-                          <div className="flex items-center gap-4">
-                            <div className="w-10 h-10 rounded-lg bg-indigo-500/20 flex items-center justify-center text-indigo-400 group-hover:scale-110 transition">
-                              <i className="fa-solid fa-video"></i>
-                            </div>
-                            <div className="text-left">
-                              <span className="block text-sm font-bold text-white group-hover:text-indigo-400 transition">1080p Ultra HD</span>
-                              <span className="text-[10px] text-slate-500 font-mono">MP4 • 145 MB</span>
-                            </div>
-                          </div>
-                          <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center group-hover:bg-indigo-500 group-hover:text-white transition">
-                            <i className="fa-solid fa-arrow-down"></i>
-                          </div>
-                        </button>
-                        <button className="w-full flex justify-between items-center p-3.5 rounded-xl bg-white/[0.03] hover:bg-purple-500/10 border border-white/10 hover:border-purple-500/50 group transition duration-300" onClick={startDownload}>
-                          <div className="flex items-center gap-4">
-                            <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center text-purple-400 group-hover:scale-110 transition">
-                              <i className="fa-solid fa-music"></i>
-                            </div>
-                            <div className="text-left">
-                              <span className="block text-sm font-bold text-white group-hover:text-purple-400 transition">Audio Stream</span>
-                              <span className="text-[10px] text-slate-500 font-mono">MP3 • 320 KBPS</span>
-                            </div>
-                          </div>
-                          <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center group-hover:bg-purple-500 group-hover:text-white transition">
-                            <i className="fa-solid fa-arrow-down"></i>
-                          </div>
-                        </button>
+                        {/* Map through available media formats if they exist */}
+                        {videoData.medias && videoData.medias.length > 0 ? (
+                          videoData.medias.map((media: any, idx: number) => (
+                            <button 
+                              key={idx}
+                              className="w-full flex justify-between items-center p-3.5 rounded-xl bg-white/[0.03] hover:bg-indigo-500/10 border border-white/10 hover:border-indigo-500/50 group transition duration-300" 
+                              onClick={() => {
+                                startDownload();
+                                window.open(media.url || media.link, '_blank');
+                              }}
+                            >
+                              <div className="flex items-center gap-4">
+                                <div className={`w-10 h-10 rounded-lg flex items-center justify-center group-hover:scale-110 transition ${media.type === 'audio' ? 'bg-purple-500/20 text-purple-400' : 'bg-indigo-500/20 text-indigo-400'}`}>
+                                  <i className={`fa-solid ${media.type === 'audio' ? 'fa-music' : 'fa-video'}`}></i>
+                                </div>
+                                <div className="text-left">
+                                  <span className={`block text-sm font-bold text-white transition ${media.type === 'audio' ? 'group-hover:text-purple-400' : 'group-hover:text-indigo-400'}`}>
+                                    {media.quality || media.resolution || (media.type === 'audio' ? 'Audio Stream' : 'Video Stream')}
+                                  </span>
+                                  <span className="text-[10px] text-slate-500 font-mono">
+                                    {media.extension || media.format || 'MP4'} • {media.size || media.formattedSize || 'N/A'}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className={`w-8 h-8 rounded-full bg-white/5 flex items-center justify-center transition ${media.type === 'audio' ? 'group-hover:bg-purple-500' : 'group-hover:bg-indigo-500'} group-hover:text-white`}>
+                                <i className="fa-solid fa-arrow-down"></i>
+                              </div>
+                            </button>
+                          ))
+                        ) : videoData.links && videoData.links.length > 0 ? (
+                          videoData.links.map((link: any, idx: number) => (
+                            <button 
+                              key={idx}
+                              className="w-full flex justify-between items-center p-3.5 rounded-xl bg-white/[0.03] hover:bg-indigo-500/10 border border-white/10 hover:border-indigo-500/50 group transition duration-300" 
+                              onClick={() => {
+                                startDownload();
+                                window.open(link.url || link.link || link, '_blank');
+                              }}
+                            >
+                              <div className="flex items-center gap-4">
+                                <div className="w-10 h-10 rounded-lg bg-indigo-500/20 flex items-center justify-center text-indigo-400 group-hover:scale-110 transition">
+                                  <i className="fa-solid fa-download"></i>
+                                </div>
+                                <div className="text-left">
+                                  <span className="block text-sm font-bold text-white group-hover:text-indigo-400 transition">
+                                    {link.quality || `Option ${idx + 1}`}
+                                  </span>
+                                  <span className="text-[10px] text-slate-500 font-mono">
+                                    {link.format || 'Media File'}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center group-hover:bg-indigo-500 group-hover:text-white transition">
+                                <i className="fa-solid fa-arrow-down"></i>
+                              </div>
+                            </button>
+                          ))
+                        ) : (
+                          /* Fallback if no medias array but single url exists */
+                          (videoData.url || videoData.link) && (
+                            <button 
+                              className="w-full flex justify-between items-center p-3.5 rounded-xl bg-white/[0.03] hover:bg-indigo-500/10 border border-white/10 hover:border-indigo-500/50 group transition duration-300" 
+                              onClick={() => {
+                                startDownload();
+                                window.open(videoData.url || videoData.link, '_blank');
+                              }}
+                            >
+                              <div className="flex items-center gap-4">
+                                <div className="w-10 h-10 rounded-lg bg-indigo-500/20 flex items-center justify-center text-indigo-400 group-hover:scale-110 transition">
+                                  <i className="fa-solid fa-video"></i>
+                                </div>
+                                <div className="text-left">
+                                  <span className="block text-sm font-bold text-white group-hover:text-indigo-400 transition">Download Media</span>
+                                  <span className="text-[10px] text-slate-500 font-mono">Original Quality</span>
+                                </div>
+                              </div>
+                              <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center group-hover:bg-indigo-500 group-hover:text-white transition">
+                                <i className="fa-solid fa-arrow-down"></i>
+                              </div>
+                            </button>
+                          )
+                        )}
                       </div>
                     </div>
                   </div>
